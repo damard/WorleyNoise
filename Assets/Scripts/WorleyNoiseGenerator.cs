@@ -1,7 +1,11 @@
 ﻿using UnityEngine;
+using Unity.Collections;
 using UnityEngine.Rendering;
 using Unity.Mathematics;
 using Random = UnityEngine.Random;
+using UnityEditor;
+using UnityEngine.Scripting;
+using UnityEngine.Experimental.Rendering;
 
 public class WorleyNoiseGenerator : MonoBehaviour
 {
@@ -93,10 +97,37 @@ public class WorleyNoiseGenerator : MonoBehaviour
         int threadsPerGroup = Mathf.CeilToInt(textureResolution / (float) _threadGroupSize);
         computeShader.Dispatch(0, threadsPerGroup, threadsPerGroup, threadsPerGroup);
 
-        quadMeshRenderer.sharedMaterial.SetTexture("_BaseMap", noiseTexture);
+        string worleyPath = "Assets/Textures/3DWorley.asset";
         
+        /*
+        Texture3D worleyTex = new Texture3D(textureResolution, textureResolution, textureResolution, TextureFormat.ARGB32, false){wrapMode = TextureWrapMode.Repeat, filterMode= FilterMode.Bilinear};
+        Graphics.CopyTexture(noiseTexture, worleyTex);
+        worleyTex.Apply(false, true);
+        AssetDatabase.CreateAsset(worleyTex, worleyPath);
+        AssetDatabase.SaveAssetIfDirty(worleyTex);
+        AssetDatabase.SaveAssets();*/
+
+        SaveRT3DToTexture3DAsset(noiseTexture, worleyPath);
+
+        quadMeshRenderer.sharedMaterial.SetTexture("_BaseMap", noiseTexture);
         _computeBuffer.Release();
         _computeBuffer = null;
+    }
+
+    void SaveRT3DToTexture3DAsset(RenderTexture rt3D, string filepath)
+    {
+        int width = rt3D.width, height = rt3D.height, depth = rt3D.volumeDepth;
+        var a = new NativeArray<byte>(width * height * depth, Allocator.Persistent, NativeArrayOptions.UninitializedMemory); //change if format is not 8 bits (i was using R8_UNorm) (create a struct with 4 bytes etc)
+        AsyncGPUReadback.RequestIntoNativeArray(ref a, rt3D, 0, (_) =>
+        {
+            Texture3D output = new Texture3D(width, height, depth, rt3D.graphicsFormat, TextureCreationFlags.None);
+            output.SetPixelData(a, 0);
+            output.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+            AssetDatabase.CreateAsset(output, filepath);
+            AssetDatabase.SaveAssetIfDirty(output);
+            a.Dispose();
+            rt3D.Release();
+        });
     }
 
     private void CreateRenderTexture(ref RenderTexture renderTexture, int resolution, string name, TextureDimension textureDimension)
@@ -115,7 +146,8 @@ public class WorleyNoiseGenerator : MonoBehaviour
                 volumeDepth = textureDimension == TextureDimension.Tex3D ? resolution : 0,
                 name = name,
                 wrapMode = TextureWrapMode.Repeat,
-                filterMode = FilterMode.Bilinear
+                filterMode = FilterMode.Bilinear,
+                graphicsFormat = GraphicsFormat.R8_UNorm
             };
 
             renderTexture.Create();
